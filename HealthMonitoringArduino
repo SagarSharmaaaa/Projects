@@ -1,0 +1,89 @@
+#include <Wire.h>
+#include "MAX30100_PulseOximeter.h"
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Pins
+#define DS18B20_PIN 15
+
+// Objects
+PulseOximeter pox;
+OneWire oneWire(DS18B20_PIN);
+DallasTemperature tempSensor(&oneWire);
+
+// Shared variables
+volatile float g_heartRate = 0.0;
+volatile float g_spo2 = 0.0;
+volatile float g_bodyTemp = 0.0;
+
+// Task handles
+TaskHandle_t h_taskReadPPG, h_taskReadTemp;
+
+// Beat callback
+void onBeatDetected() {
+  Serial.println("❤ Beat detected!");
+}
+
+// ---------------- PPG Task ----------------
+void taskReadPPG(void *pvParameters) {
+  while (1) {
+    pox.update(); // must be called continuously
+
+    float hr = pox.getHeartRate();
+    float s = pox.getSpO2();
+
+    g_heartRate = (hr > 30 && hr < 200) ? hr : 0;
+    g_spo2 = (s > 50 && s <= 100) ? s : 0;
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+// ---------------- Temperature Task ----------------
+void taskReadTemp(void *pvParameters) {
+  while (1) {
+    // Request temperatures
+    tempSensor.requestTemperatures();
+    delay(100); // give sensor time to respond
+
+    float tempC = tempSensor.getTempCByIndex(0);
+    g_bodyTemp = (tempC != DEVICE_DISCONNECTED_C) ? tempC : 0;
+
+    vTaskDelay(pdMS_TO_TICKS(2000)); // read every 2 seconds
+  }
+}
+
+// ---------------- Setup ----------------
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22);
+
+  // MAX30100
+  Serial.println("Initializing MAX30100...");
+  if (!pox.begin()) {
+    Serial.println("❌ MAX30100 not found");
+    while (1);
+  }
+  pox.setOnBeatDetectedCallback(onBeatDetected);
+  Serial.println("✅ MAX30100 ready");
+
+  // DS18B20
+  tempSensor.begin();
+  Serial.println("✅ DS18B20 ready");
+
+  // Create FreeRTOS tasks
+  xTaskCreatePinnedToCore(taskReadPPG, "PPG", 4000, NULL, 1, &h_taskReadPPG, 0);
+  xTaskCreatePinnedToCore(taskReadTemp, "TEMP", 2000, NULL, 1, &h_taskReadTemp, 1);
+}
+
+// ---------------- Loop ----------------
+void loop() {
+  Serial.print("[LIVE] HR: ");
+  Serial.print(g_heartRate);
+  Serial.print(" | SpO2: ");
+  Serial.print(g_spo2);
+  Serial.print(" | Temp: ");
+  Serial.println(g_bodyTemp);
+
+  delay(1000);
+}
