@@ -9,50 +9,61 @@ vector<vector<Point>> strokes;
 vector<Point> currentStroke;
 bool isDrawing = false;
 
-// ===== Better Finger Detection =====
-Point detectFinger(Mat &frame) {
-    Mat hsv, mask, blurImg;
+// Pre-created kernel (avoids realloc every frame)
+Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
 
-    // Convert to HSV (better than grayscale for segmentation)
+// Optional: reduce resolution for speed
+const double SCALE = 0.6;
+
+// ===== Fast Finger Detection =====
+Point detectFinger(Mat &frame) {
+    Mat hsv, mask;
+
+    // Resize for speed (VERY IMPORTANT)
+    resize(frame, frame, Size(), SCALE, SCALE);
+
     cvtColor(frame, hsv, COLOR_BGR2HSV);
 
-    // Simple skin color range (basic but better than thresholding gray)
+    // Skin mask
     Scalar lower(0, 30, 60);
     Scalar upper(20, 150, 255);
     inRange(hsv, lower, upper, mask);
 
-    // Reduce noise
-    GaussianBlur(mask, blurImg, Size(7,7), 0);
-    erode(blurImg, blurImg, Mat(), Point(-1,-1), 2);
-    dilate(blurImg, blurImg, Mat(), Point(-1,-1), 2);
+    // Faster than GaussianBlur chain
+    morphologyEx(mask, mask, MORPH_OPEN, kernel);
 
     vector<vector<Point>> contours;
-    findContours(blurImg, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
     if (contours.empty()) return Point(-1, -1);
 
-    int largest = 0;
-    double maxArea = contourArea(contours[0]);
+    // FAST: single pass + early rejection
+    int bestIdx = -1;
+    double bestArea = 0;
 
-    for (int i = 1; i < contours.size(); i++) {
+    for (int i = 0; i < contours.size(); i++) {
         double area = contourArea(contours[i]);
-        if (area > maxArea) {
-            maxArea = area;
-            largest = i;
+        if (area > bestArea) {
+            bestArea = area;
+            bestIdx = i;
         }
     }
 
-    if (maxArea < 1000) return Point(-1, -1); // filter noise
+    if (bestArea < 1200) return Point(-1, -1);
 
-    Rect box = boundingRect(contours[largest]);
+    Rect box = boundingRect(contours[bestIdx]);
 
-    // fingertip approximation (top-middle of hand blob)
+    // fingertip estimate
     return Point(box.x + box.width / 2, box.y);
 }
 
 // ===== Main =====
 int main() {
     VideoCapture cap(0);
+
+    // Try lowering camera buffer lag (important for FPS feel)
+    cap.set(CAP_PROP_BUFFERSIZE, 1);
+
     if (!cap.isOpened()) return -1;
 
     Mat frame;
@@ -65,8 +76,11 @@ int main() {
 
         Point finger = detectFinger(frame);
 
-        // ===== Drawing Logic =====
-        if (finger.x != -1 && finger.y != -1) {
+        // scale correction (because we resized inside function)
+        finger.x = (int)(finger.x / SCALE);
+        finger.y = (int)(finger.y / SCALE);
+
+        if (finger.x >= 0 && finger.y >= 0) {
             circle(frame, finger, 8, Scalar(0,255,0), FILLED);
 
             if (!isDrawing) {
@@ -75,8 +89,8 @@ int main() {
             }
 
             currentStroke.push_back(finger);
-
-        } else {
+        }
+        else {
             if (isDrawing && !currentStroke.empty()) {
                 strokes.push_back(currentStroke);
                 currentStroke.clear();
@@ -84,7 +98,7 @@ int main() {
             }
         }
 
-        // ===== Render Strokes =====
+        // Draw strokes
         for (const auto &stroke : strokes) {
             for (size_t i = 1; i < stroke.size(); i++) {
                 line(frame, stroke[i-1], stroke[i], Scalar(255,0,0), 2);
@@ -94,8 +108,8 @@ int main() {
         imshow("Air Doodle", frame);
 
         char key = (char)waitKey(1);
-        if (key == 27) break;       // ESC
-        if (key == 'c') strokes.clear(); // clear screen
+        if (key == 27) break;
+        if (key == 'c') strokes.clear();
     }
 
     return 0;
