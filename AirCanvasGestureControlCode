@@ -1,0 +1,41 @@
+// scale correction
+finger.x = (int)(finger.x / SCALE);
+finger.y = (int)(finger.y / SCALE);
+
+if (finger.x >= 0 && finger.y >= 0) {
+
+    if (fingerCount == 1) {
+        // ✏️ DRAW MODE
+        circle(frame, finger, 8, Scalar(0,255,0), FILLED);
+
+        if (!isDrawing) {
+            currentStroke.clear();
+            isDrawing = true;
+        }
+
+        currentStroke.push_back(finger);
+    }
+    else if (fingerCount == 2) {
+        // 🧹 ERASE MODE
+        circle(frame, finger, 8, Scalar(0,0,255), FILLED);
+
+        strokes.clear();   // simple erase all
+        currentStroke.clear();
+        isDrawing = false;
+    }
+    else {
+        // ✊ STOP / PAUSE
+        if (isDrawing && !currentStroke.empty()) {
+            strokes.push_back(currentStroke);
+            currentStroke.clear();
+        }
+        isDrawing = false;
+    }
+}
+else {
+    if (isDrawing && !currentStroke.empty()) {
+        strokes.push_back(currentStroke);
+        currentStroke.clear();
+    }
+    isDrawing = false;
+}
