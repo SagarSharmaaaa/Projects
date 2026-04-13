@@ -1,0 +1,53 @@
+Point detectFinger(Mat &frame, int &fingerCount) {
+    static Mat hsv, mask;  // reuse memory (IMPORTANT)
+
+    resize(frame, frame, Size(), SCALE, SCALE);
+    cvtColor(frame, hsv, COLOR_BGR2HSV);
+
+    inRange(hsv, Scalar(0, 30, 60), Scalar(20, 150, 255), mask);
+
+    morphologyEx(mask, mask, MORPH_OPEN, kernel);
+
+    vector<vector<Point>> contours;
+    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+    if (contours.empty()) {
+        fingerCount = 0;
+        return Point(-1, -1);
+    }
+
+    // 🔥 Faster max contour using iterator
+    int bestIdx = 0;
+    double bestArea = 0;
+
+    for (int i = 0; i < contours.size(); i++) {
+        double area = contourArea(contours[i]);
+        if (area > bestArea) {
+            bestArea = area;
+            bestIdx = i;
+        }
+    }
+
+    if (bestArea < 1200) {
+        fingerCount = 0;
+        return Point(-1, -1);
+    }
+
+    // Convex hull (optimized)
+    vector<int> hull;
+    convexHull(contours[bestIdx], hull);
+
+    // Finger count
+    vector<Vec4i> defects;
+    convexityDefects(contours[bestIdx], hull, defects);
+
+    fingerCount = 0;
+    for (auto &d : defects) {
+        if (d[3] / 256.0 > 10) fingerCount++;
+    }
+    fingerCount = min(fingerCount + 1, 5); // clamp
+
+    Rect box = boundingRect(contours[bestIdx]);
+
+    return Point(box.x + box.width / 2, box.y);
+}
