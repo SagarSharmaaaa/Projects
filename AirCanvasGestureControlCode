@@ -2,29 +2,41 @@
 finger.x = (int)(finger.x / SCALE);
 finger.y = (int)(finger.y / SCALE);
 
+static Point prevFinger(-1, -1);
+
+// 🔥 smoothing (reduces shaking)
+if (prevFinger.x != -1) {
+    finger.x = (finger.x + prevFinger.x) / 2;
+    finger.y = (finger.y + prevFinger.y) / 2;
+}
+prevFinger = finger;
+
 if (finger.x >= 0 && finger.y >= 0) {
 
     if (fingerCount == 1) {
-        // ✏️ DRAW MODE
-        circle(frame, finger, 8, Scalar(0,255,0), FILLED);
-
+        // DRAW
         if (!isDrawing) {
             currentStroke.clear();
             isDrawing = true;
         }
 
-        currentStroke.push_back(finger);
+        // 🔥 skip tiny movements (optimization + smoothness)
+        if (currentStroke.empty() || norm(finger - currentStroke.back()) > 5) {
+            currentStroke.push_back(finger);
+        }
+
+        circle(frame, finger, 6, Scalar(0,255,0), FILLED);
     }
     else if (fingerCount == 2) {
-        // 🧹 ERASE MODE
-        circle(frame, finger, 8, Scalar(0,0,255), FILLED);
+        // ERASE (optimized - partial erase instead of full clear)
+        if (!strokes.empty()) strokes.pop_back();
 
-        strokes.clear();   // simple erase all
         currentStroke.clear();
         isDrawing = false;
+
+        circle(frame, finger, 6, Scalar(0,0,255), FILLED);
     }
     else {
-        // ✊ STOP / PAUSE
         if (isDrawing && !currentStroke.empty()) {
             strokes.push_back(currentStroke);
             currentStroke.clear();
