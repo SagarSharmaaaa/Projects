@@ -1,0 +1,157 @@
+#include <opencv2/opencv.hpp>
+#include <vector>
+
+using namespace cv;
+using namespace std;
+
+// ===== Drawing Data =====
+vector<vector<Point>> strokes;
+vector<Point> currentStroke;
+bool isDrawing = false;
+
+Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+const double SCALE = 0.6;
+
+// ===== Detect Finger + Area =====
+Point detectFinger(Mat &frame, int &fingerCount, double &areaOut) {
+    static Mat hsv, mask;
+
+    resize(frame, frame, Size(), SCALE, SCALE);
+    cvtColor(frame, hsv, COLOR_BGR2HSV);
+
+    inRange(hsv, Scalar(0, 30, 60), Scalar(20, 150, 255), mask);
+    morphologyEx(mask, mask, MORPH_OPEN, kernel);
+
+    vector<vector<Point>> contours;
+    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+    if (contours.empty()) {
+        fingerCount = 0;
+        areaOut = 0;
+        return Point(-1, -1);
+    }
+
+    int bestIdx = 0;
+    double bestArea = 0;
+
+    for (int i = 0; i < contours.size(); i++) {
+        double area = contourArea(contours[i]);
+        if (area > bestArea) {
+            bestArea = area;
+            bestIdx = i;
+        }
+    }
+
+    if (bestArea < 1200) {
+        fingerCount = 0;
+        areaOut = 0;
+        return Point(-1, -1);
+    }
+
+    // convex hull + defects (finger count)
+    vector<int> hull;
+    convexHull(contours[bestIdx], hull);
+
+    vector<Vec4i> defects;
+    convexityDefects(contours[bestIdx], hull, defects);
+
+    fingerCount = 0;
+    for (auto &d : defects) {
+        if (d[3] / 256.0 > 10) fingerCount++;
+    }
+    fingerCount = min(fingerCount + 1, 5);
+
+    areaOut = bestArea;
+
+    Rect box = boundingRect(contours[bestIdx]);
+    return Point(box.x + box.width / 2, box.y);
+}
+
+// ===== Main =====
+int main() {
+    VideoCapture cap(0);
+    cap.set(CAP_PROP_BUFFERSIZE, 1);
+
+    if (!cap.isOpened()) return -1;
+
+    Mat frame;
+
+    double smoothArea = 0; // 🔥 smoothing
+
+    while (true) {
+        cap >> frame;
+        if (frame.empty()) break;
+
+        flip(frame, frame, 1);
+
+        int fingerCount = 0;
+        double handArea = 0;
+
+        Point finger = detectFinger(frame, fingerCount, handArea);
+
+        // scale correction
+        finger.x = (int)(finger.x / SCALE);
+        finger.y = (int)(finger.y / SCALE);
+
+        // 🔥 smooth area (important)
+        smoothArea = 0.8 * smoothArea + 0.2 * handArea;
+
+        // ===== Thickness based on distance =====
+        int thickness;
+
+        if (smoothArea > 6000) thickness = 6;
+        else if (smoothArea > 3500) thickness = 4;
+        else if (smoothArea > 2000) thickness = 2;
+        else thickness = 1;
+
+        if (finger.x >= 0 && finger.y >= 0) {
+
+            if (fingerCount == 1) {
+                // DRAW MODE
+                circle(frame, finger, 6, Scalar(0,255,0), FILLED);
+
+                if (!isDrawing) {
+                    currentStroke.clear();
+                    isDrawing = true;
+                }
+
+                currentStroke.push_back(finger);
+            }
+            else {
+                if (isDrawing && !currentStroke.empty()) {
+                    strokes.push_back(currentStroke);
+                    currentStroke.clear();
+                }
+                isDrawing = false;
+            }
+        }
+        else {
+            if (isDrawing && !currentStroke.empty()) {
+                strokes.push_back(currentStroke);
+                currentStroke.clear();
+            }
+            isDrawing = false;
+        }
+
+        // ===== Draw strokes =====
+        for (const auto &stroke : strokes) {
+            for (size_t i = 1; i < stroke.size(); i++) {
+                line(frame, stroke[i-1], stroke[i],
+                     Scalar(255,0,0), thickness);
+            }
+        }
+
+        // Debug info
+        putText(frame, "Thickness: " + to_string(thickness),
+                Point(10,30), FONT_HERSHEY_SIMPLEX, 0.7,
+                Scalar(255,255,255), 2);
+
+        imshow("Air Doodle", frame);
+
+        char key = (char)waitKey(1);
+        if (key == 27) break;
+        if (key == 'c') strokes.clear();
+    }
+
+    return 0;
+}
